@@ -5,6 +5,7 @@ declare module "next-auth" {
     accessToken?: string;
     user: DefaultSession["user"] & {
       keycloakUserId: string;
+      helmUserId: string;
       fullName: string;
       username: string;
     };
@@ -17,6 +18,7 @@ declare module "next-auth/jwt" {
     refreshToken?: string;
     accessTokenExpiresAt?: number;
     keycloakUserId?: string;
+    helmUserId?: string;
     fullName?: string;
     username?: string;
   }
@@ -28,6 +30,7 @@ declare module "@auth/core/jwt" {
     refreshToken?: string;
     accessTokenExpiresAt?: number;
     keycloakUserId?: string;
+    helmUserId?: string;
     fullName?: string;
     username?: string;
   }

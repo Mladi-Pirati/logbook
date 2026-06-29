@@ -6,6 +6,7 @@ import {
   getKeycloakUsernameFromProfile,
   getKeycloakFullNameFromProfile,
 } from "@/lib/auth/keycloak-access";
+import { upsertUser } from "@/lib/sync-user";
 
 const keycloakProfileSchema = z
   .object({ sub: z.string().min(1) })
@@ -77,10 +78,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       try {
         const helm = await getHelm(account.access_token);
         const user = await helm.user.me();
-        return user.applications.some(
+        const hasAccess = user.applications.some(
           (a: { keycloakClientId: string }) =>
             a.keycloakClientId === process.env.KEYCLOAK_CLIENT_ID,
         );
+        if (hasAccess) {
+          await upsertUser(user).catch((e) =>
+            console.error("[auth] upsertUser error:", e),
+          );
+        }
+        return hasAccess;
       } catch (e) {
         console.error("[auth] signIn error:", e);
         return false;
@@ -98,6 +105,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (parsed.success) token.keycloakUserId = parsed.data.sub;
         token.username = getKeycloakUsernameFromProfile(profile) ?? "";
         token.fullName = getKeycloakFullNameFromProfile(profile) ?? "";
+        // Store helm user id (different from Keycloak sub) for DB foreign keys
+        try {
+          const helm = await getHelm(account.access_token);
+          const helmUser = await helm.user.me();
+          token.helmUserId = helmUser.id;
+        } catch (e) {
+          console.error("[auth] jwt: failed to fetch helm user id:", e);
+        }
         return token;
       }
 
@@ -122,6 +137,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (token.accessToken) session.accessToken = token.accessToken;
       if (session.user) {
         session.user.keycloakUserId = token.keycloakUserId ?? "";
+        session.user.helmUserId = token.helmUserId ?? "";
         session.user.username = token.username ?? "";
         session.user.fullName = token.fullName ?? "";
       }
