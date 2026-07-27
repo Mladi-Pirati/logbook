@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server"
 import { revalidatePath } from "next/cache"
+import { after } from "next/server"
 import { z } from "zod"
-import { verifyIntegrationAuth, resolveDiscordUser, userNotLinkedResponse } from "@/lib/discord/api"
+import {
+  verifyIntegrationAuth,
+  resolveDiscordUser,
+  userNotLinkedResponse,
+} from "@/lib/discord/api"
 import { updateTicketCore } from "@/lib/tickets"
 import { syncTicketToDiscordSafely } from "@/lib/discord/notify"
 import { getTicketDiscordPayload } from "@/lib/discord/payload"
+import { plainTextToRichText } from "@/lib/rich-text"
+import { cleanupTicketAttachmentObjects } from "@/lib/ticket-attachments"
 
 const updateTicketSchema = z.object({
   title: z.string().min(1).max(200).optional(),
@@ -86,9 +93,11 @@ export async function PATCH(
   await updateTicketCore({
     id,
     title,
-    description,
+    descriptionDocument:
+      description !== undefined ? plainTextToRichText(description) : undefined,
     priority,
   })
+  after(() => cleanupTicketAttachmentObjects())
 
   await syncTicketToDiscordSafely(id)
   revalidatePath(`/projects/${payload.project.key}/board`)

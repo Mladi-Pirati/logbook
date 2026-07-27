@@ -1,6 +1,19 @@
-import { and, eq, sql } from "drizzle-orm"
+import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm"
 import { db } from "@/db"
-import { projects, tickets, ticketAssignees, ticketLabels } from "@/db/schema"
+import {
+  projects,
+  tickets,
+  ticketAssignees,
+  ticketAttachments,
+  ticketLabels,
+  users,
+} from "@/db/schema"
+import {
+  getRichTextAttachmentIds,
+  getRichTextMentionIds,
+  type RichTextDocument,
+  richTextToPlainText,
+} from "@/lib/rich-text"
 
 type Db = typeof db
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
@@ -11,7 +24,8 @@ export type CreateTicketCoreInput = {
   projectId: string
   columnId: string
   title: string
-  description?: string
+  descriptionDocument: RichTextDocument
+  draftId?: string
   parentId?: string
   reporterId: string
   estimate?: number
@@ -24,7 +38,9 @@ export type CreateTicketCoreInput = {
 export type UpdateTicketCoreInput = {
   id: string
   title?: string
-  description?: string | null
+  descriptionDocument?: RichTextDocument
+  draftId?: string
+  uploadedById?: string
   columnId?: string
   parentId?: string | null
   estimate?: number | null
@@ -41,12 +57,38 @@ async function nextColumnPosition(executor: Db | Tx, columnId: string) {
   return (maxPositionResult[0]?.pos ?? 0) + 1024
 }
 
+async function getMentionNames(executor: Db | Tx, document: RichTextDocument) {
+  const mentionIds = getRichTextMentionIds(document)
+  if (mentionIds.length === 0) return new Map<string, string>()
+
+  const mentionedUsers = await executor
+    .select({
+      id: users.id,
+      firstName: users.firstName,
+      lastName: users.lastName,
+    })
+    .from(users)
+    .where(inArray(users.id, mentionIds))
+
+  if (mentionedUsers.length !== mentionIds.length) {
+    throw new Error("Invalid user mention")
+  }
+
+  return new Map(
+    mentionedUsers.map((user) => [
+      user.id,
+      `${user.firstName} ${user.lastName}`,
+    ]),
+  )
+}
+
 export async function createTicketCore(input: CreateTicketCoreInput) {
   const {
     projectId,
     columnId,
     title,
-    description,
+    descriptionDocument,
+    draftId,
     parentId,
     reporterId,
     estimate,
@@ -55,8 +97,35 @@ export async function createTicketCore(input: CreateTicketCoreInput) {
     assigneeIds,
     labelIds,
   } = input
+  const attachmentIds = getRichTextAttachmentIds(descriptionDocument)
 
   return db.transaction(async (tx) => {
+    const mentionNames = await getMentionNames(tx, descriptionDocument)
+
+    if (attachmentIds.length > 0) {
+      if (!draftId) throw new Error("Attachment draft is required")
+      const attachments = await tx
+        .select({
+          id: ticketAttachments.id,
+          draftId: ticketAttachments.draftId,
+          uploadedById: ticketAttachments.uploadedById,
+          deletedAt: ticketAttachments.deletedAt,
+        })
+        .from(ticketAttachments)
+        .where(inArray(ticketAttachments.id, attachmentIds))
+      if (
+        attachments.length !== attachmentIds.length ||
+        attachments.some(
+          (attachment) =>
+            attachment.draftId !== draftId ||
+            attachment.uploadedById !== reporterId ||
+            attachment.deletedAt !== null,
+        )
+      ) {
+        throw new Error("Invalid ticket attachment reference")
+      }
+    }
+
     const [proj] = await tx
       .update(projects)
       .set({ nextTicketNumber: sql`${projects.nextTicketNumber} + 1` })
@@ -72,7 +141,10 @@ export async function createTicketCore(input: CreateTicketCoreInput) {
         projectId,
         number,
         title,
-        description,
+        description: richTextToPlainText(descriptionDocument, {
+          mentions: mentionNames,
+        }),
+        descriptionDocument,
         columnId,
         parentId,
         reporterId,
@@ -83,16 +155,27 @@ export async function createTicketCore(input: CreateTicketCoreInput) {
       })
       .returning()
 
+    if (attachmentIds.length > 0) {
+      await tx
+        .update(ticketAttachments)
+        .set({
+          ticketId: ticket.id,
+          draftId: null,
+          claimedAt: new Date(),
+        })
+        .where(inArray(ticketAttachments.id, attachmentIds))
+    }
+
     if (assigneeIds.length > 0) {
-      await tx.insert(ticketAssignees).values(
-        assigneeIds.map((userId) => ({ ticketId: ticket.id, userId })),
-      )
+      await tx
+        .insert(ticketAssignees)
+        .values(assigneeIds.map((userId) => ({ ticketId: ticket.id, userId })))
     }
 
     if (labelIds.length > 0) {
-      await tx.insert(ticketLabels).values(
-        labelIds.map((labelId) => ({ ticketId: ticket.id, labelId })),
-      )
+      await tx
+        .insert(ticketLabels)
+        .values(labelIds.map((labelId) => ({ ticketId: ticket.id, labelId })))
     }
 
     return ticket
@@ -100,19 +183,112 @@ export async function createTicketCore(input: CreateTicketCoreInput) {
 }
 
 export async function updateTicketCore(input: UpdateTicketCoreInput) {
-  const { id, dueDate, completedAt, ...rest } = input
+  const {
+    id,
+    dueDate,
+    completedAt,
+    descriptionDocument,
+    draftId,
+    uploadedById,
+    ...rest
+  } = input
+  const attachmentIds = descriptionDocument
+    ? getRichTextAttachmentIds(descriptionDocument)
+    : undefined
 
-  const [ticket] = await db
-    .update(tickets)
-    .set({
-      ...rest,
-      dueDate: dueDate !== undefined ? (dueDate ? new Date(dueDate) : null) : undefined,
-      completedAt: completedAt !== undefined ? (completedAt ? new Date(completedAt) : null) : undefined,
-    })
-    .where(eq(tickets.id, id))
-    .returning()
+  return db.transaction(async (tx) => {
+    const mentionNames = descriptionDocument
+      ? await getMentionNames(tx, descriptionDocument)
+      : undefined
 
-  return ticket
+    if (attachmentIds) {
+      const referenced =
+        attachmentIds.length > 0
+          ? await tx
+              .select({
+                id: ticketAttachments.id,
+                ticketId: ticketAttachments.ticketId,
+                draftId: ticketAttachments.draftId,
+                uploadedById: ticketAttachments.uploadedById,
+                deletedAt: ticketAttachments.deletedAt,
+              })
+              .from(ticketAttachments)
+              .where(inArray(ticketAttachments.id, attachmentIds))
+          : []
+
+      if (
+        referenced.length !== attachmentIds.length ||
+        referenced.some((attachment) => {
+          if (attachment.deletedAt) return true
+          if (attachment.ticketId === id) return false
+          return (
+            !draftId ||
+            !uploadedById ||
+            attachment.ticketId !== null ||
+            attachment.draftId !== draftId ||
+            attachment.uploadedById !== uploadedById
+          )
+        })
+      ) {
+        throw new Error("Invalid ticket attachment reference")
+      }
+
+      const draftAttachmentIds = referenced
+        .filter((attachment) => attachment.ticketId === null)
+        .map((attachment) => attachment.id)
+      if (draftAttachmentIds.length > 0) {
+        await tx
+          .update(ticketAttachments)
+          .set({ ticketId: id, draftId: null, claimedAt: new Date() })
+          .where(inArray(ticketAttachments.id, draftAttachmentIds))
+      }
+
+      const removalWhere =
+        attachmentIds.length > 0
+          ? and(
+              eq(ticketAttachments.ticketId, id),
+              isNull(ticketAttachments.deletedAt),
+              notInArray(ticketAttachments.id, attachmentIds),
+            )
+          : and(
+              eq(ticketAttachments.ticketId, id),
+              isNull(ticketAttachments.deletedAt),
+            )
+      await tx
+        .update(ticketAttachments)
+        .set({ deletedAt: new Date() })
+        .where(removalWhere)
+    }
+
+    const [ticket] = await tx
+      .update(tickets)
+      .set({
+        ...rest,
+        description:
+          descriptionDocument !== undefined
+            ? richTextToPlainText(descriptionDocument, {
+                mentions: mentionNames,
+              })
+            : undefined,
+        descriptionDocument,
+        dueDate:
+          dueDate !== undefined
+            ? dueDate
+              ? new Date(dueDate)
+              : null
+            : undefined,
+        completedAt:
+          completedAt !== undefined
+            ? completedAt
+              ? new Date(completedAt)
+              : null
+            : undefined,
+      })
+      .where(eq(tickets.id, id))
+      .returning()
+
+    return ticket
+  })
 }
 
 export async function moveTicketCore(input: {

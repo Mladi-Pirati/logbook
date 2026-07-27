@@ -4,10 +4,16 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { db } from "@/db"
 import { columns, projects } from "@/db/schema"
-import { verifyIntegrationAuth, resolveDiscordUser, userNotLinkedResponse, validateAssigneeIds } from "@/lib/discord/api"
+import {
+  verifyIntegrationAuth,
+  resolveDiscordUser,
+  userNotLinkedResponse,
+  validateAssigneeIds,
+} from "@/lib/discord/api"
 import { createTicketCore } from "@/lib/tickets"
 import { syncTicketToDiscordSafely } from "@/lib/discord/notify"
 import { getTicketDiscordPayload } from "@/lib/discord/payload"
+import { plainTextToRichText } from "@/lib/rich-text"
 
 const createTicketSchema = z.object({
   projectKey: z.string(),
@@ -33,7 +39,15 @@ export async function POST(request: Request) {
     )
   }
 
-  const { projectKey, title, description, priority, columnId, assigneeIds, discordUserId } = parsed.data
+  const {
+    projectKey,
+    title,
+    description,
+    priority,
+    columnId,
+    assigneeIds,
+    discordUserId,
+  } = parsed.data
 
   const user = await resolveDiscordUser(discordUserId)
   if (!user) return userNotLinkedResponse()
@@ -86,7 +100,7 @@ export async function POST(request: Request) {
     projectId: project.id,
     columnId: targetColumnId,
     title,
-    description,
+    descriptionDocument: plainTextToRichText(description),
     priority,
     reporterId: user.id,
     assigneeIds: validated.assigneeIds,
@@ -98,8 +112,5 @@ export async function POST(request: Request) {
 
   const payload = await getTicketDiscordPayload(ticket.id)
 
-  return NextResponse.json(
-    { ok: true, ...payload },
-    { status: 201 },
-  )
+  return NextResponse.json({ ok: true, ...payload }, { status: 201 })
 }

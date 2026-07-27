@@ -1,7 +1,11 @@
-import { asc, eq } from "drizzle-orm"
+import { asc, eq, inArray } from "drizzle-orm"
 import { db } from "@/db"
-import { columns, tickets } from "@/db/schema"
+import { columns, tickets, users } from "@/db/schema"
 import { getCanonicalTicketUrl } from "@/lib/ticket-url"
+import {
+  getRichTextMentionIds,
+  richTextToDiscordMarkdown,
+} from "@/lib/rich-text"
 
 type ColumnInfo = {
   id: string
@@ -78,11 +82,30 @@ export async function getTicketDiscordPayload(
       reporter: true,
       assignees: { with: { user: true } },
       ticketLabels: { with: { label: true } },
+      attachments: true,
     },
   })
   if (!ticket) return null
 
   const baseUrl = (process.env.AUTH_URL ?? "").replace(/\/$/, "")
+  const mentionIds = getRichTextMentionIds(ticket.descriptionDocument)
+  const mentionedUsers =
+    mentionIds.length > 0
+      ? await db
+          .select({
+            id: users.id,
+            firstName: users.firstName,
+            lastName: users.lastName,
+          })
+          .from(users)
+          .where(inArray(users.id, mentionIds))
+      : []
+  const mentionNames = new Map(
+    mentionedUsers.map((user) => [
+      user.id,
+      `${user.firstName} ${user.lastName}`,
+    ]),
+  )
 
   return {
     ticket: {
@@ -90,14 +113,21 @@ export async function getTicketDiscordPayload(
       number: ticket.number,
       key: `${ticket.project.key}-${ticket.number}`,
       title: ticket.title,
-      description: ticket.description,
+      description: richTextToDiscordMarkdown(ticket.descriptionDocument, {
+        baseUrl,
+        attachments: new Map(
+          ticket.attachments
+            .filter((attachment) => attachment.deletedAt === null)
+            .map((attachment) => [
+              attachment.id,
+              { fileName: attachment.fileName },
+            ]),
+        ),
+        mentions: mentionNames,
+      }),
       priority: ticket.priority,
       dueDate: ticket.dueDate?.toISOString() ?? null,
-      url: getCanonicalTicketUrl(
-        baseUrl,
-        ticket.project.key,
-        ticket.number,
-      ),
+      url: getCanonicalTicketUrl(baseUrl, ticket.project.key, ticket.number),
       reporter: userInfo(ticket.reporter),
       assignees: ticket.assignees.map((a) => userInfo(a.user)),
       labels: ticket.ticketLabels.map((tl) => ({

@@ -1,10 +1,11 @@
 import { cache } from "react"
-import { and, asc, eq } from "drizzle-orm"
+import { and, asc, eq, isNull } from "drizzle-orm"
 import { db } from "@/db"
 import {
   columns,
   projects,
   ticketComments,
+  ticketAttachments,
   tickets,
   users,
 } from "@/db/schema"
@@ -32,6 +33,9 @@ export const getTicketPageDataById = cache(async (ticketId: string) => {
         reporter: true,
         assignees: { with: { user: true } },
         ticketLabels: { with: { label: true } },
+        attachments: {
+          where: isNull(ticketAttachments.deletedAt),
+        },
         comments: {
           orderBy: [asc(ticketComments.createdAt)],
           with: { author: true },

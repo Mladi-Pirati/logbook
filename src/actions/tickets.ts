@@ -13,19 +13,21 @@ import {
   updateTicketCore,
 } from "@/lib/tickets"
 import { syncTicketToDiscordSafely } from "@/lib/discord/notify"
+import { cleanupTicketAttachmentObjects } from "@/lib/ticket-attachments"
+import { richTextDocumentSchema } from "@/lib/rich-text"
+import { after } from "next/server"
 
 const createTicketInput = z.object({
   projectId: z.string().uuid(),
   projectKey: z.string(),
   columnId: z.string().uuid(),
   title: z.string().min(1).max(200),
-  description: z.string().optional(),
+  descriptionDocument: richTextDocumentSchema,
+  draftId: z.string().uuid(),
   parentId: z.string().uuid().optional(),
   estimate: z.number().int().min(0).optional(),
   dueDate: z.string().datetime().optional(),
-  priority: z
-    .enum(["urgent", "high", "medium", "low", "none"])
-    .default("none"),
+  priority: z.enum(["urgent", "high", "medium", "low", "none"]).default("none"),
   assigneeIds: z.array(z.string()).default([]),
   labelIds: z.array(z.string().uuid()).default([]),
 })
@@ -34,7 +36,8 @@ const updateTicketInput = z.object({
   id: z.string().uuid(),
   projectKey: z.string(),
   title: z.string().min(1).max(200).optional(),
-  description: z.string().nullable().optional(),
+  descriptionDocument: richTextDocumentSchema.optional(),
+  draftId: z.string().uuid().optional(),
   columnId: z.string().uuid().optional(),
   parentId: z.string().uuid().nullable().optional(),
   estimate: z.number().int().min(0).nullable().optional(),
@@ -69,15 +72,19 @@ export async function createTicket(raw: unknown) {
 }
 
 export async function updateTicket(raw: unknown) {
-  await requireUser()
+  const user = await requireUser()
   const parsed = updateTicketInput.safeParse(raw)
   if (!parsed.success)
     return { ok: false as const, errors: parsed.error.issues }
 
   const { projectKey, ...input } = parsed.data
-  const ticket = await updateTicketCore(input)
+  const ticket = await updateTicketCore({
+    ...input,
+    uploadedById: user.helmUserId,
+  })
 
   await syncTicketToDiscordSafely(ticket.id)
+  after(() => cleanupTicketAttachmentObjects())
   revalidatePath(`/projects/${projectKey}/board`)
   revalidatePath("/(app)/tickets/[key]", "page")
   return { ok: true as const, ticket }

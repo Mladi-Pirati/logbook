@@ -18,7 +18,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
+import { RichTextEditor } from "@/components/rich-text/rich-text-editor-dynamic"
 import {
   Select,
   SelectContent,
@@ -43,9 +43,19 @@ import { MemberAvatar } from "@/components/member-avatar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { createTicket } from "@/actions/tickets"
-import { fetchProjectColumns, fetchAllUsers } from "@/actions/fetch-project-data"
+import {
+  fetchProjectColumns,
+  fetchAllUsers,
+} from "@/actions/fetch-project-data"
+import { plainTextToRichText } from "@/lib/rich-text"
 
-type Project = { id: string; key: string; name: string; icon: string; color: string }
+type Project = {
+  id: string
+  key: string
+  name: string
+  icon: string
+  color: string
+}
 type Column = { id: string; name: string; color: string; category: string }
 type User = {
   id: string
@@ -79,14 +89,22 @@ export function GlobalCreateDialog({
 }) {
   const [pending, startTransition] = useTransition()
   const [loadingBoard, startLoadingBoard] = useTransition()
+  const savedRef = useRef(false)
 
-  const [selectedProjectKey, setSelectedProjectKey] = useState(initialProjectKey ?? "")
+  const [selectedProjectKey, setSelectedProjectKey] = useState(
+    initialProjectKey ?? "",
+  )
   const [projectColumns, setProjectColumns] = useState<Column[]>([])
   const [allUsers, setAllUsers] = useState<User[]>([])
   const allUsersRef = useRef<Array<User>>([])
 
   const [title, setTitle] = useState("")
-  const [description, setDescription] = useState("")
+  const [descriptionDocument, setDescriptionDocument] = useState(() =>
+    plainTextToRichText(""),
+  )
+  const [draftId, setDraftId] = useState(() => crypto.randomUUID())
+  const [uploadsPending, setUploadsPending] = useState(false)
+  const [draftAttachmentIds, setDraftAttachmentIds] = useState<string[]>([])
   const [columnId, setColumnId] = useState("")
   const [priority, setPriority] = useState<Priority>("none")
   const [estimate, setEstimate] = useState("")
@@ -94,6 +112,10 @@ export function GlobalCreateDialog({
   const [assigneeIds, setAssigneeIds] = useState<string[]>([])
   const [assigneeOpen, setAssigneeOpen] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(false)
+
+  useEffect(() => {
+    if (open) savedRef.current = false
+  }, [open])
 
   // Load columns + users when project changes
   useEffect(() => {
@@ -116,7 +138,10 @@ export function GlobalCreateDialog({
 
   function reset() {
     setTitle("")
-    setDescription("")
+    setDescriptionDocument(plainTextToRichText(""))
+    setDraftId(crypto.randomUUID())
+    setUploadsPending(false)
+    setDraftAttachmentIds([])
     setColumnId("")
     setPriority("none")
     setEstimate("")
@@ -136,7 +161,8 @@ export function GlobalCreateDialog({
         projectKey: selectedProject.key,
         columnId,
         title,
-        description: description || undefined,
+        descriptionDocument,
+        draftId,
         priority,
         estimate: estimate ? parseInt(estimate) : undefined,
         dueDate: dueDate?.toISOString(),
@@ -148,15 +174,32 @@ export function GlobalCreateDialog({
         return
       }
       toast.success(`${selectedProject.key}-${result.ticket.number} created`)
+      savedRef.current = true
       onOpenChange(false)
       reset()
     })
   }
 
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
+      if (!savedRef.current) {
+        void Promise.allSettled(
+          draftAttachmentIds.map((id) =>
+            fetch(`/api/ticket-attachments/${id}`, { method: "DELETE" }),
+          ),
+        )
+      }
+      reset()
+    } else {
+      savedRef.current = false
+    }
+    onOpenChange(nextOpen)
+  }
+
   const selectedAssignees = allUsers.filter((u) => assigneeIds.includes(u.id))
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v) }}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create ticket</DialogTitle>
@@ -203,7 +246,9 @@ export function GlobalCreateDialog({
                       {p.icon}
                     </span>
                     {p.name}
-                    <span className="ml-1 font-mono text-xs text-muted-foreground">{p.key}</span>
+                    <span className="ml-1 font-mono text-xs text-muted-foreground">
+                      {p.key}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -224,13 +269,16 @@ export function GlobalCreateDialog({
 
           <div className="grid gap-2">
             <Label htmlFor="g-desc">Description</Label>
-            <Textarea
-              id="g-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Add more context…"
-              rows={3}
+            <RichTextEditor
+              key={draftId}
+              value={descriptionDocument}
+              attachments={[]}
+              users={allUsers}
+              draftId={draftId}
               disabled={!selectedProject}
+              onChange={setDescriptionDocument}
+              onPendingChange={setUploadsPending}
+              onDraftAttachmentsChange={setDraftAttachmentIds}
             />
           </div>
 
@@ -242,7 +290,9 @@ export function GlobalCreateDialog({
               ) : (
                 <Select
                   value={columnId}
-                  onValueChange={(v) => { if (v) setColumnId(v) }}
+                  onValueChange={(v) => {
+                    if (v) setColumnId(v)
+                  }}
                   disabled={!selectedProject || projectColumns.length === 0}
                 >
                   <SelectTrigger>
@@ -257,7 +307,9 @@ export function GlobalCreateDialog({
                           {col.name}
                         </span>
                       ) : (
-                        <span className="text-muted-foreground">Select status</span>
+                        <span className="text-muted-foreground">
+                          Select status
+                        </span>
                       )
                     })()}
                   </SelectTrigger>
@@ -280,15 +332,22 @@ export function GlobalCreateDialog({
               <Label>Priority</Label>
               <Select
                 value={priority}
-                onValueChange={(v) => { if (v) setPriority(v as Priority) }}
+                onValueChange={(v) => {
+                  if (v) setPriority(v as Priority)
+                }}
                 disabled={!selectedProject}
               >
                 <SelectTrigger>
-                  <span>{PRIORITIES.find((p) => p.value === priority)?.label ?? "None"}</span>
+                  <span>
+                    {PRIORITIES.find((p) => p.value === priority)?.label ??
+                      "None"}
+                  </span>
                 </SelectTrigger>
                 <SelectContent>
                   {PRIORITIES.map((p) => (
-                    <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                    <SelectItem key={p.value} value={p.value}>
+                      {p.label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -326,7 +385,10 @@ export function GlobalCreateDialog({
                   {dueDate && (
                     <XIcon
                       className="h-4 w-4 shrink-0"
-                      onClick={(e) => { e.stopPropagation(); setDueDate(undefined) }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setDueDate(undefined)
+                      }}
                     />
                   )}
                 </PopoverTrigger>
@@ -334,7 +396,10 @@ export function GlobalCreateDialog({
                   <Calendar
                     mode="single"
                     selected={dueDate}
-                    onSelect={(d) => { setDueDate(d); setCalendarOpen(false) }}
+                    onSelect={(d) => {
+                      setDueDate(d)
+                      setCalendarOpen(false)
+                    }}
                   />
                 </PopoverContent>
               </Popover>
@@ -354,7 +419,11 @@ export function GlobalCreateDialog({
                   ) : (
                     <div className="flex -space-x-1 items-center">
                       {selectedAssignees.slice(0, 4).map((u) => (
-                        <MemberAvatar key={u.id} className="h-6 w-6 border border-background" member={u} />
+                        <MemberAvatar
+                          key={u.id}
+                          className="h-6 w-6 border border-background"
+                          member={u}
+                        />
                       ))}
                       {selectedAssignees.length > 4 && (
                         <span className="ml-1 text-xs text-muted-foreground">
@@ -388,7 +457,10 @@ export function GlobalCreateDialog({
                             <MemberAvatar className="mr-2 h-6 w-6" member={u} />
                             {u.firstName} {u.lastName}
                             <CheckIcon
-                              className={cn("ml-auto h-4 w-4", selected ? "opacity-100" : "opacity-0")}
+                              className={cn(
+                                "ml-auto h-4 w-4",
+                                selected ? "opacity-100" : "opacity-0",
+                              )}
                             />
                           </CommandItem>
                         )
@@ -401,10 +473,19 @@ export function GlobalCreateDialog({
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={() => { reset(); onOpenChange(false) }}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleOpenChange(false)}
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={pending || !selectedProject || !columnId}>
+            <Button
+              type="submit"
+              disabled={
+                pending || uploadsPending || !selectedProject || !columnId
+              }
+            >
               {pending ? "Creating…" : "Create ticket"}
             </Button>
           </div>

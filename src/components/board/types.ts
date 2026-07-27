@@ -1,3 +1,5 @@
+import type { RichTextAttachment, RichTextDocument } from "@/lib/rich-text"
+
 export type User = {
   id: string
   username: string
@@ -19,6 +21,7 @@ export type Ticket = {
   number: number
   title: string
   description: string | null
+  descriptionDocument: RichTextDocument
   columnId: string
   parentId: string | null
   reporterId: string
@@ -32,6 +35,7 @@ export type Ticket = {
   assignees: { user: User }[]
   ticketLabels: { label: Label }[]
   reporter: User
+  attachments?: RichTextAttachment[]
 }
 
 export type Column = {

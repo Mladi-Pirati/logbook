@@ -16,6 +16,7 @@ import {
 } from "@phosphor-icons/react"
 import { toast } from "sonner"
 import { TicketDialog } from "@/components/board/ticket-dialog"
+import { RichTextDescription } from "@/components/rich-text/rich-text-description"
 import type {
   Column,
   Label,
@@ -111,13 +112,13 @@ export function TicketDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div className="border-b px-4 py-3">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          nativeButton={false}
-          render={
-            <Link href={`/projects/${project.key}/board`}>
-              <ArrowLeftIcon />
+            <Button
+              variant="ghost"
+              size="sm"
+              nativeButton={false}
+              render={
+                <Link href={`/projects/${project.key}/board`}>
+                  <ArrowLeftIcon />
                   Back to board
                 </Link>
               }
@@ -141,7 +142,8 @@ export function TicketDetail({
                 </CardTitle>
                 <CardDescription className="flex items-center gap-2">
                   <MemberAvatar className="size-6" member={ticket.reporter} />
-                  Reported by {ticket.reporter.firstName} {ticket.reporter.lastName}
+                  Reported by {ticket.reporter.firstName}{" "}
+                  {ticket.reporter.lastName}
                 </CardDescription>
                 <CardAction>
                   <Button
@@ -155,22 +157,18 @@ export function TicketDetail({
                 </CardAction>
               </CardHeader>
               <CardContent className="grid gap-4">
-                <p className="whitespace-pre-wrap text-sm">
-                  {ticket.description || (
-                    <span className="text-muted-foreground">
-                      No description.
-                    </span>
-                  )}
-                </p>
+                <RichTextDescription
+                  document={ticket.descriptionDocument}
+                  attachments={ticket.attachments ?? []}
+                  users={users}
+                />
                 <div className="flex flex-wrap gap-2">
                   <Badge variant="secondary">
                     {status?.name ?? "Unknown status"}
                   </Badge>
                   <Badge variant="outline">Priority: {ticket.priority}</Badge>
                   {ticket.estimate !== null && (
-                    <Badge variant="outline">
-                      Estimate: {ticket.estimate}
-                    </Badge>
+                    <Badge variant="outline">Estimate: {ticket.estimate}</Badge>
                   )}
                   {ticket.dueDate && (
                     <Badge variant="outline">
@@ -197,12 +195,17 @@ export function TicketDetail({
                 <span className="text-xs font-medium">Assignees</span>
                 {ticket.assignees.length ? (
                   ticket.assignees.map(({ user }) => (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground" key={user.id}>
+                    <div
+                      className="flex items-center gap-2 text-xs text-muted-foreground"
+                      key={user.id}
+                    >
                       <MemberAvatar className="size-6" member={user} />
                       {user.firstName} {user.lastName}
                     </div>
                   ))
-                ) : <span className="text-xs text-muted-foreground">—</span>}
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
               </div>
               <InfoList
                 label="Labels"
@@ -210,7 +213,9 @@ export function TicketDetail({
               />
               <InfoList
                 label="Created"
-                values={[format(new Date(ticket.createdAt), "MMM d, yyyy HH:mm")]}
+                values={[
+                  format(new Date(ticket.createdAt), "MMM d, yyyy HH:mm"),
+                ]}
               />
             </CardContent>
           </Card>
@@ -356,8 +361,12 @@ function TicketComments({
                 <MemberAvatar member={comment.avatarMember} />
               ) : (
                 <Avatar>
-                  {comment.avatarUrl ? <AvatarImage src={comment.avatarUrl} alt="" /> : null}
-                  <AvatarFallback>{initials(comment.displayName)}</AvatarFallback>
+                  {comment.avatarUrl ? (
+                    <AvatarImage src={comment.avatarUrl} alt="" />
+                  ) : null}
+                  <AvatarFallback>
+                    {initials(comment.displayName)}
+                  </AvatarFallback>
                 </Avatar>
               )}
               <div className="min-w-0 flex-1">
@@ -434,13 +443,13 @@ function TicketComments({
 
                 <div className="mt-2 flex flex-wrap items-center gap-1">
                   {comment.discordMessageUrl && (
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        nativeButton={false}
-                        render={
-                          <a
-                            href={comment.discordMessageUrl}
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      nativeButton={false}
+                      render={
+                        <a
+                          href={comment.discordMessageUrl}
                           target="_blank"
                           rel="noreferrer"
                         >
@@ -472,18 +481,17 @@ function TicketComments({
                       </Button>
                     </>
                   )}
-                  {isOwnLogbookComment &&
-                    comment.syncStatus === "failed" && (
-                      <Button
-                        size="xs"
-                        variant="destructive"
-                        disabled={pending}
-                        onClick={() => retry(comment.id)}
-                      >
-                        <WarningCircleIcon />
-                        Retry Discord sync
-                      </Button>
-                    )}
+                  {isOwnLogbookComment && comment.syncStatus === "failed" && (
+                    <Button
+                      size="xs"
+                      variant="destructive"
+                      disabled={pending}
+                      onClick={() => retry(comment.id)}
+                    >
+                      <WarningCircleIcon />
+                      Retry Discord sync
+                    </Button>
+                  )}
                 </div>
               </div>
             </article>
@@ -502,10 +510,7 @@ function TicketComments({
             <span className="text-xs text-muted-foreground">
               {body.length}/2000
             </span>
-            <Button
-              disabled={pending || !body.trim()}
-              onClick={submitComment}
-            >
+            <Button disabled={pending || !body.trim()} onClick={submitComment}>
               Add comment
             </Button>
           </div>

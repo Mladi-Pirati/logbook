@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useEffect, useRef, useState, useTransition } from "react"
 import { format } from "date-fns"
 import { toast } from "sonner"
 import {
@@ -18,7 +18,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -43,6 +42,8 @@ import { MemberAvatar } from "@/components/member-avatar"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { createTicket, updateTicket } from "@/actions/tickets"
+import { RichTextEditor } from "@/components/rich-text/rich-text-editor-dynamic"
+import { plainTextToRichText } from "@/lib/rich-text"
 import type { Column, Ticket, User, Label as LabelType, Project } from "./types"
 
 const PRIORITIES = [
@@ -76,9 +77,15 @@ export function TicketDialog({
 }) {
   const [pending, startTransition] = useTransition()
   const isEdit = !!ticket
+  const savedRef = useRef(false)
 
   const [title, setTitle] = useState(ticket?.title ?? "")
-  const [description, setDescription] = useState(ticket?.description ?? "")
+  const [descriptionDocument, setDescriptionDocument] = useState(
+    ticket?.descriptionDocument ?? plainTextToRichText(ticket?.description),
+  )
+  const [draftId] = useState(() => crypto.randomUUID())
+  const [uploadsPending, setUploadsPending] = useState(false)
+  const [draftAttachmentIds, setDraftAttachmentIds] = useState<string[]>([])
   const [columnId, setColumnId] = useState(
     ticket?.columnId ?? defaultColumnId ?? columns[0]?.id ?? "",
   )
@@ -96,6 +103,10 @@ export function TicketDialog({
   const [assigneeOpen, setAssigneeOpen] = useState(false)
   const [labelOpen, setLabelOpen] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(false)
+
+  useEffect(() => {
+    if (open) savedRef.current = false
+  }, [open])
 
   function toggleAssignee(userId: string) {
     setAssigneeIds((ids) =>
@@ -118,7 +129,8 @@ export function TicketDialog({
     startTransition(async () => {
       const payload = {
         title,
-        description: description || undefined,
+        descriptionDocument,
+        draftId,
         columnId,
         priority,
         estimate: estimate ? parseInt(estimate) : undefined,
@@ -138,15 +150,27 @@ export function TicketDialog({
       }
 
       toast.success(isEdit ? "Ticket updated" : "Ticket created")
+      savedRef.current = true
       onOpenChange(false)
     })
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen && !savedRef.current) {
+      void Promise.allSettled(
+        draftAttachmentIds.map((id) =>
+          fetch(`/api/ticket-attachments/${id}`, { method: "DELETE" }),
+        ),
+      )
+    }
+    onOpenChange(nextOpen)
   }
 
   const selectedAssignees = users.filter((u) => assigneeIds.includes(u.id))
   const selectedLabels = labels.filter((l) => labelIds.includes(l.id))
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
@@ -171,12 +195,15 @@ export function TicketDialog({
 
           <div className="grid gap-2">
             <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Add more context…"
-              rows={4}
+            <RichTextEditor
+              value={descriptionDocument}
+              attachments={ticket?.attachments ?? []}
+              users={users}
+              draftId={draftId}
+              disabled={pending}
+              onChange={setDescriptionDocument}
+              onPendingChange={setUploadsPending}
+              onDraftAttachmentsChange={setDraftAttachmentIds}
             />
           </div>
 
@@ -185,7 +212,9 @@ export function TicketDialog({
               <Label>Status</Label>
               <Select
                 value={columnId}
-                onValueChange={(v) => { if (v) setColumnId(v) }}
+                onValueChange={(v) => {
+                  if (v) setColumnId(v)
+                }}
               >
                 <SelectTrigger>
                   {(() => {
@@ -199,14 +228,19 @@ export function TicketDialog({
                         {col.name}
                       </span>
                     ) : (
-                      <span className="text-muted-foreground">Select status</span>
+                      <span className="text-muted-foreground">
+                        Select status
+                      </span>
                     )
                   })()}
                 </SelectTrigger>
                 <SelectContent>
                   {columns.map((col) => (
                     <SelectItem key={col.id} value={col.id}>
-                      <span className="inline-block h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: col.color }} />
+                      <span
+                        className="inline-block h-2 w-2 rounded-full shrink-0"
+                        style={{ backgroundColor: col.color }}
+                      />
                       {col.name}
                     </SelectItem>
                   ))}
@@ -218,10 +252,15 @@ export function TicketDialog({
               <Label>Priority</Label>
               <Select
                 value={priority}
-                onValueChange={(v) => { if (v) setPriority(v as Priority) }}
+                onValueChange={(v) => {
+                  if (v) setPriority(v as Priority)
+                }}
               >
                 <SelectTrigger>
-                  <span>{PRIORITIES.find((p) => p.value === priority)?.label ?? "None"}</span>
+                  <span>
+                    {PRIORITIES.find((p) => p.value === priority)?.label ??
+                      "None"}
+                  </span>
                 </SelectTrigger>
                 <SelectContent>
                   {PRIORITIES.map((p) => (
@@ -287,9 +326,7 @@ export function TicketDialog({
           <div className="grid gap-2">
             <Label>Assignees</Label>
             <Popover open={assigneeOpen} onOpenChange={setAssigneeOpen}>
-              <PopoverTrigger
-                className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors hover:bg-accent"
-              >
+              <PopoverTrigger className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors hover:bg-accent">
                 <div className="flex items-center gap-2">
                   {selectedAssignees.length === 0 ? (
                     <span className="text-muted-foreground">Unassigned</span>
@@ -349,9 +386,7 @@ export function TicketDialog({
             <div className="grid gap-2">
               <Label>Labels</Label>
               <Popover open={labelOpen} onOpenChange={setLabelOpen}>
-                <PopoverTrigger
-                  className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors hover:bg-accent"
-                >
+                <PopoverTrigger className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors hover:bg-accent">
                   <div className="flex flex-wrap gap-1">
                     {selectedLabels.length === 0 ? (
                       <span className="text-muted-foreground">No labels</span>
@@ -412,11 +447,11 @@ export function TicketDialog({
             <Button
               type="button"
               variant="outline"
-              onClick={() => onOpenChange(false)}
+              onClick={() => handleOpenChange(false)}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={pending}>
+            <Button type="submit" disabled={pending || uploadsPending}>
               {pending ? "Saving…" : isEdit ? "Save changes" : "Create ticket"}
             </Button>
           </div>
