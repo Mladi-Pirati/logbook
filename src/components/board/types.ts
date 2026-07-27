@@ -3,6 +3,8 @@ export type User = {
   username: string
   firstName: string
   lastName: string
+  profilePictureVersion: string | null
+  profilePictureBlurhash: string | null
 }
 
 export type Label = {

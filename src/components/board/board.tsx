@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useOptimistic, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import {
   DndContext,
   DragOverlay,
@@ -15,19 +16,11 @@ import { toast } from "sonner"
 import { PlusIcon } from "@phosphor-icons/react"
 import { TicketCard } from "./ticket-card"
 import { BoardColumn } from "./board-column"
-import { TicketDialog } from "./ticket-dialog"
 import { ColumnDialog } from "./column-dialog"
 import { moveTicket } from "@/actions/tickets"
 import { deleteColumn } from "@/actions/boards"
-import type { Board as BoardType, Column, Project, Ticket, User } from "./types"
-
-type UserRow = {
-  id: string
-  username: string
-  firstName: string
-  lastName: string
-  syncedAt: Date
-}
+import type { Board as BoardType, Column, Project, Ticket } from "./types"
+import { getTicketPath } from "@/lib/ticket-url"
 
 function midpoint(a: number, b: number) {
   return (a + b) / 2
@@ -43,19 +36,14 @@ function getNextPosition(tickets: Ticket[], overIndex: number): number {
 export function Board({
   project,
   board,
-  users,
 }: {
   project: Project
   board: BoardType
-  users: UserRow[]
 }) {
   const [, startTransition] = useTransition()
+  const router = useRouter()
   const [optimisticColumns, applyOptimistic] = useOptimistic(board.columns)
   const [activeTicket, setActiveTicket] = useState<Ticket | null>(null)
-
-  // Ticket dialog state
-  const [ticketDialogOpen, setTicketDialogOpen] = useState(false)
-  const [editingTicket, setEditingTicket] = useState<Ticket | undefined>()
 
   // Column dialog state
   const [columnDialogOpen, setColumnDialogOpen] = useState(false)
@@ -131,8 +119,7 @@ export function Board({
   }
 
   function openEditTicket(ticket: Ticket) {
-    setEditingTicket(ticket)
-    setTicketDialogOpen(true)
+    router.push(getTicketPath(project.key, ticket.number))
   }
 
   function openCreateColumn() {
@@ -156,20 +143,6 @@ export function Board({
       else toast.success(`Column "${col.name}" deleted`)
     })
   }
-
-  const allLabels = [...new Map(
-    optimisticColumns
-      .flatMap((c) => c.tickets)
-      .flatMap((t) => t.ticketLabels.map((tl) => tl.label))
-      .map((l) => [l.id, l]),
-  ).values()]
-
-  const mappedUsers: User[] = users.map((u) => ({
-    id: u.id,
-    username: u.username,
-    firstName: u.firstName,
-    lastName: u.lastName,
-  }))
 
   const nextColumnPosition =
     Math.max(0, ...optimisticColumns.map((c) => c.position)) + 1024
@@ -216,17 +189,6 @@ export function Board({
           Add column
         </button>
       </div>
-
-      <TicketDialog
-        key={editingTicket?.id ?? "new"}
-        open={ticketDialogOpen}
-        onOpenChange={setTicketDialogOpen}
-        project={project}
-        columns={optimisticColumns}
-        users={mappedUsers}
-        labels={allLabels}
-        ticket={editingTicket}
-      />
 
       <ColumnDialog
         open={columnDialogOpen}

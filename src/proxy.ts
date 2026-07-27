@@ -8,5 +8,8 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!api/auth|login|_next/static|_next/image|favicon.ico).*)"],
+  // api/integrations routes authenticate with their own bearer secret
+  matcher: [
+    "/((?!api/auth|api/integrations|login|_next/static|_next/image|favicon.ico).*)",
+  ],
 };

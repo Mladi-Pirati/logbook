@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import {
@@ -12,6 +13,11 @@ import { LoginForm } from "@/components/auth/login-form";
 interface LoginPageProps {
   searchParams: Promise<{ error?: string }>;
 }
+
+export const metadata: Metadata = {
+  title: "Sign in",
+  description: "Sign in to Logbook.",
+};
 
 function getErrorMessage(error?: string): string | undefined {
   if (!error) return undefined;

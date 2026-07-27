@@ -17,3 +17,19 @@ export const ticketPriority = pgEnum("ticket_priority", [
   "low",
   "none",
 ])
+
+export const ticketCommentSource = pgEnum("ticket_comment_source", [
+  "logbook",
+  "discord",
+])
+
+export const ticketCommentSyncStatus = pgEnum("ticket_comment_sync_status", [
+  "pending",
+  "synced",
+  "failed",
+])
+
+export const ticketCommentSyncOperation = pgEnum(
+  "ticket_comment_sync_operation",
+  ["create", "update", "delete"],
+)

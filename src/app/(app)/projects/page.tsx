@@ -1,9 +1,19 @@
+import type { Metadata } from "next"
 import Link from "next/link"
 import { getProjects } from "@/lib/queries/projects"
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { MemberAvatar } from "@/components/member-avatar"
 
 export const dynamic = "force-dynamic"
+
+export const metadata: Metadata = {
+  title: "Projects",
+  description: "Browse your Logbook projects.",
+  alternates: {
+    canonical: "/projects",
+  },
+}
 
 export default async function ProjectsPage() {
   const projects = await getProjects()
@@ -40,6 +50,12 @@ export default async function ProjectsPage() {
                       {project.description}
                     </CardDescription>
                   )}
+                  {project.lead ? (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                      <MemberAvatar className="size-6" member={project.lead} />
+                      {project.lead.firstName} {project.lead.lastName}
+                    </div>
+                  ) : null}
                 </CardHeader>
               </Card>
             </Link>

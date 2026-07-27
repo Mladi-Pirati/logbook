@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { Geist, JetBrains_Mono } from "next/font/google"
 
 import "./globals.css"
@@ -12,6 +13,20 @@ const fontSans = Geist({
 })
 
 const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" })
+
+export const metadata: Metadata = {
+  metadataBase: new URL(process.env.AUTH_URL ?? "http://localhost:3002"),
+  applicationName: "Logbook",
+  title: {
+    default: "Logbook",
+    template: "%s · Logbook",
+  },
+  description: "Track projects, tickets, and their conversations in one place.",
+  robots: {
+    index: false,
+    follow: false,
+  },
+}
 
 export default function RootLayout({
   children,

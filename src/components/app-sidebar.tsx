@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button"
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog"
 import { GlobalCreateDialog } from "@/components/global-create-dialog"
 import { logoutAction } from "@/actions/auth"
+import { MemberAvatar, type AvatarMember } from "@/components/member-avatar"
 
 type Project = {
   id: string
@@ -31,7 +32,13 @@ type Project = {
   icon: string
 }
 
-export function AppSidebar({ projects }: { projects: Project[] }) {
+export function AppSidebar({
+  member,
+  projects,
+}: {
+  member: AvatarMember | null
+  projects: Project[]
+}) {
   const pathname = usePathname()
   const [createProjectOpen, setCreateProjectOpen] = useState(false)
   const [createTicketOpen, setCreateTicketOpen] = useState(false)
@@ -108,6 +115,14 @@ export function AppSidebar({ projects }: { projects: Project[] }) {
         </SidebarContent>
 
         <SidebarFooter className="p-4">
+          {member ? (
+            <div className="mb-2 flex items-center gap-2 px-2">
+              <MemberAvatar className="size-8" member={member} />
+              <span className="truncate text-sm font-medium">
+                {member.firstName} {member.lastName}
+              </span>
+            </div>
+          ) : null}
           <form action={logoutAction}>
             <Button
               type="submit"
@@ -128,6 +143,7 @@ export function AppSidebar({ projects }: { projects: Project[] }) {
       />
 
       <GlobalCreateDialog
+        key={currentProjectKey ?? "global-create"}
         open={createTicketOpen}
         onOpenChange={setCreateTicketOpen}
         projects={projects}

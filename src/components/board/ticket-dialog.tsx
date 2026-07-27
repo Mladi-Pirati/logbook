@@ -39,7 +39,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { MemberAvatar } from "@/components/member-avatar"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { createTicket, updateTicket } from "@/actions/tickets"
@@ -296,15 +296,11 @@ export function TicketDialog({
                   ) : (
                     <div className="flex -space-x-1 items-center">
                       {selectedAssignees.slice(0, 4).map((u) => (
-                        <Avatar
+                        <MemberAvatar
                           key={u.id}
                           className="h-6 w-6 border border-background"
-                        >
-                          <AvatarFallback className="text-[10px]">
-                            {u.firstName[0]}
-                            {u.lastName[0]}
-                          </AvatarFallback>
-                        </Avatar>
+                          member={u}
+                        />
                       ))}
                       {selectedAssignees.length > 4 && (
                         <span className="ml-1 text-xs text-muted-foreground">
@@ -329,12 +325,7 @@ export function TicketDialog({
                             key={u.id}
                             onSelect={() => toggleAssignee(u.id)}
                           >
-                            <Avatar className="h-6 w-6 mr-2">
-                              <AvatarFallback className="text-[10px]">
-                                {u.firstName[0]}
-                                {u.lastName[0]}
-                              </AvatarFallback>
-                            </Avatar>
+                            <MemberAvatar className="mr-2 h-6 w-6" member={u} />
                             <span>
                               {u.firstName} {u.lastName}
                             </span>

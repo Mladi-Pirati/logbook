@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition, useEffect } from "react"
+import { useEffect, useRef, useState, useTransition } from "react"
 import { format } from "date-fns"
 import { toast } from "sonner"
 import {
@@ -39,7 +39,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { MemberAvatar } from "@/components/member-avatar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { createTicket } from "@/actions/tickets"
@@ -47,7 +47,14 @@ import { fetchProjectColumns, fetchAllUsers } from "@/actions/fetch-project-data
 
 type Project = { id: string; key: string; name: string; icon: string; color: string }
 type Column = { id: string; name: string; color: string; category: string }
-type User = { id: string; firstName: string; lastName: string; username: string }
+type User = {
+  id: string
+  firstName: string
+  lastName: string
+  username: string
+  profilePictureVersion: string | null
+  profilePictureBlurhash: string | null
+}
 
 const PRIORITIES = [
   { value: "none", label: "None" },
@@ -76,6 +83,7 @@ export function GlobalCreateDialog({
   const [selectedProjectKey, setSelectedProjectKey] = useState(initialProjectKey ?? "")
   const [projectColumns, setProjectColumns] = useState<Column[]>([])
   const [allUsers, setAllUsers] = useState<User[]>([])
+  const allUsersRef = useRef<Array<User>>([])
 
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
@@ -89,26 +97,22 @@ export function GlobalCreateDialog({
 
   // Load columns + users when project changes
   useEffect(() => {
-    if (!selectedProjectKey) {
-      setProjectColumns([])
-      setColumnId("")
-      return
-    }
+    if (!selectedProjectKey) return
     startLoadingBoard(async () => {
       const [cols, users] = await Promise.all([
         fetchProjectColumns(selectedProjectKey),
-        allUsers.length === 0 ? fetchAllUsers() : Promise.resolve(allUsers),
+        allUsersRef.current.length === 0
+          ? fetchAllUsers()
+          : Promise.resolve(allUsersRef.current),
       ])
       setProjectColumns(cols as Column[])
-      if (allUsers.length === 0) setAllUsers(users)
+      if (allUsersRef.current.length === 0) {
+        allUsersRef.current = users
+        setAllUsers(users)
+      }
       setColumnId(cols[0]?.id ?? "")
     })
   }, [selectedProjectKey])
-
-  // Sync initial project key when dialog opens
-  useEffect(() => {
-    if (open) setSelectedProjectKey(initialProjectKey ?? "")
-  }, [open, initialProjectKey])
 
   function reset() {
     setTitle("")
@@ -164,7 +168,12 @@ export function GlobalCreateDialog({
             <Label>Project</Label>
             <Select
               value={selectedProjectKey}
-              onValueChange={(v) => { if (v) setSelectedProjectKey(v) }}
+              onValueChange={(v) => {
+                if (!v) return
+                setProjectColumns([])
+                setColumnId("")
+                setSelectedProjectKey(v)
+              }}
             >
               <SelectTrigger>
                 {selectedProject ? (
@@ -345,11 +354,7 @@ export function GlobalCreateDialog({
                   ) : (
                     <div className="flex -space-x-1 items-center">
                       {selectedAssignees.slice(0, 4).map((u) => (
-                        <Avatar key={u.id} className="h-6 w-6 border border-background">
-                          <AvatarFallback className="text-[10px]">
-                            {u.firstName[0]}{u.lastName[0]}
-                          </AvatarFallback>
-                        </Avatar>
+                        <MemberAvatar key={u.id} className="h-6 w-6 border border-background" member={u} />
                       ))}
                       {selectedAssignees.length > 4 && (
                         <span className="ml-1 text-xs text-muted-foreground">
@@ -380,11 +385,7 @@ export function GlobalCreateDialog({
                               )
                             }
                           >
-                            <Avatar className="h-6 w-6 mr-2">
-                              <AvatarFallback className="text-[10px]">
-                                {u.firstName[0]}{u.lastName[0]}
-                              </AvatarFallback>
-                            </Avatar>
+                            <MemberAvatar className="mr-2 h-6 w-6" member={u} />
                             {u.firstName} {u.lastName}
                             <CheckIcon
                               className={cn("ml-auto h-4 w-4", selected ? "opacity-100" : "opacity-0")}

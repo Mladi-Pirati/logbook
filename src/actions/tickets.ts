@@ -2,10 +2,17 @@
 
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
-import { eq, sql } from "drizzle-orm"
+import { eq } from "drizzle-orm"
 import { db } from "@/db"
-import { projects, tickets, ticketAssignees, ticketLabels } from "@/db/schema"
+import { ticketLabels } from "@/db/schema"
 import { requireUser } from "@/lib/auth/session"
+import {
+  createTicketCore,
+  moveTicketCore,
+  setTicketAssigneesCore,
+  updateTicketCore,
+} from "@/lib/tickets"
+import { syncTicketToDiscordSafely } from "@/lib/discord/notify"
 
 const createTicketInput = z.object({
   projectId: z.string().uuid(),
@@ -49,68 +56,15 @@ export async function createTicket(raw: unknown) {
   if (!parsed.success)
     return { ok: false as const, errors: parsed.error.issues }
 
-  const {
-    projectId,
-    projectKey,
-    columnId,
-    title,
-    description,
-    parentId,
-    estimate,
-    dueDate,
-    priority,
-    assigneeIds,
-    labelIds,
-  } = parsed.data
-
-  const ticket = await db.transaction(async (tx) => {
-    const [proj] = await tx
-      .update(projects)
-      .set({ nextTicketNumber: sql`${projects.nextTicketNumber} + 1` })
-      .where(eq(projects.id, projectId))
-      .returning({ nextTicketNumber: projects.nextTicketNumber })
-
-    const number = proj.nextTicketNumber - 1
-
-    const maxPositionResult = await tx
-      .select({ pos: sql<number>`coalesce(max(position), 0)` })
-      .from(tickets)
-      .where(eq(tickets.columnId, columnId))
-    const position = (maxPositionResult[0]?.pos ?? 0) + 1024
-
-    const [ticket] = await tx
-      .insert(tickets)
-      .values({
-        projectId,
-        number,
-        title,
-        description,
-        columnId,
-        parentId,
-        reporterId: user.helmUserId,
-        estimate,
-        dueDate: dueDate ? new Date(dueDate) : undefined,
-        priority,
-        position,
-      })
-      .returning()
-
-    if (assigneeIds.length > 0) {
-      await tx.insert(ticketAssignees).values(
-        assigneeIds.map((userId) => ({ ticketId: ticket.id, userId })),
-      )
-    }
-
-    if (labelIds.length > 0) {
-      await tx.insert(ticketLabels).values(
-        labelIds.map((labelId) => ({ ticketId: ticket.id, labelId })),
-      )
-    }
-
-    return ticket
+  const { projectKey, ...input } = parsed.data
+  const ticket = await createTicketCore({
+    ...input,
+    reporterId: user.helmUserId,
   })
 
+  await syncTicketToDiscordSafely(ticket.id)
   revalidatePath(`/projects/${projectKey}/board`)
+  revalidatePath("/(app)/tickets/[key]", "page")
   return { ok: true as const, ticket }
 }
 
@@ -120,19 +74,12 @@ export async function updateTicket(raw: unknown) {
   if (!parsed.success)
     return { ok: false as const, errors: parsed.error.issues }
 
-  const { id, projectKey, dueDate, completedAt, ...rest } = parsed.data
+  const { projectKey, ...input } = parsed.data
+  const ticket = await updateTicketCore(input)
 
-  const [ticket] = await db
-    .update(tickets)
-    .set({
-      ...rest,
-      dueDate: dueDate !== undefined ? (dueDate ? new Date(dueDate) : null) : undefined,
-      completedAt: completedAt !== undefined ? (completedAt ? new Date(completedAt) : null) : undefined,
-    })
-    .where(eq(tickets.id, id))
-    .returning()
-
+  await syncTicketToDiscordSafely(ticket.id)
   revalidatePath(`/projects/${projectKey}/board`)
+  revalidatePath("/(app)/tickets/[key]", "page")
   return { ok: true as const, ticket }
 }
 
@@ -143,13 +90,11 @@ export async function moveTicket(raw: unknown) {
     return { ok: false as const, errors: parsed.error.issues }
 
   const { ticketId, columnId, position, projectKey } = parsed.data
+  await moveTicketCore({ ticketId, columnId, position })
 
-  await db
-    .update(tickets)
-    .set({ columnId, position })
-    .where(eq(tickets.id, ticketId))
-
+  await syncTicketToDiscordSafely(ticketId)
   revalidatePath(`/projects/${projectKey}/board`)
+  revalidatePath("/(app)/tickets/[key]", "page")
   return { ok: true as const }
 }
 
@@ -159,17 +104,10 @@ export async function setTicketAssignees(
   projectKey: string,
 ) {
   await requireUser()
-  await db.transaction(async (tx) => {
-    await tx
-      .delete(ticketAssignees)
-      .where(eq(ticketAssignees.ticketId, ticketId))
-    if (assigneeIds.length > 0) {
-      await tx
-        .insert(ticketAssignees)
-        .values(assigneeIds.map((userId) => ({ ticketId, userId })))
-    }
-  })
+  await setTicketAssigneesCore(ticketId, assigneeIds)
+  await syncTicketToDiscordSafely(ticketId)
   revalidatePath(`/projects/${projectKey}/board`)
+  revalidatePath("/(app)/tickets/[key]", "page")
   return { ok: true as const }
 }
 
@@ -187,6 +125,8 @@ export async function setTicketLabels(
         .values(labelIds.map((labelId) => ({ ticketId, labelId })))
     }
   })
+  await syncTicketToDiscordSafely(ticketId)
   revalidatePath(`/projects/${projectKey}/board`)
+  revalidatePath("/(app)/tickets/[key]", "page")
   return { ok: true as const }
 }

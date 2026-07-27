@@ -10,7 +10,7 @@ import {
   ArrowDownIcon,
   WarningIcon,
 } from "@phosphor-icons/react"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { MemberAvatar } from "@/components/member-avatar"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import type { Ticket } from "./types"
@@ -112,12 +112,11 @@ export function TicketCard({
         {ticket.assignees.length > 0 && (
           <div className="flex -space-x-1">
             {ticket.assignees.slice(0, 3).map(({ user }) => (
-              <Avatar key={user.id} className="h-5 w-5 border border-background">
-                <AvatarFallback className="text-[9px] bg-primary/10 text-primary">
-                  {user.firstName[0]}
-                  {user.lastName[0]}
-                </AvatarFallback>
-              </Avatar>
+              <MemberAvatar
+                key={user.id}
+                className="h-5 w-5 border border-background text-[9px]"
+                member={user}
+              />
             ))}
           </div>
         )}
