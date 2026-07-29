@@ -1,7 +1,13 @@
-import { eq } from "drizzle-orm"
+import { eq, isNull } from "drizzle-orm"
 import { z } from "zod"
 import { db } from "@/db"
-import { ticketComments, ticketDiscordMessages } from "@/db/schema"
+import {
+  commentAttachments,
+  ticketComments,
+  ticketDiscordMessages,
+} from "@/db/schema"
+import { richTextToDiscordMarkdown } from "@/lib/rich-text"
+import { resolveRichTextMentionNames } from "@/lib/rich-text-server"
 import {
   callDiscordBot,
   getDiscordBotConfig,
@@ -46,7 +52,12 @@ export async function syncTicketCommentToDiscord(commentId: string) {
 
   const comment = await db.query.ticketComments.findFirst({
     where: eq(ticketComments.id, commentId),
-    with: { author: true },
+    with: {
+      author: true,
+      richAttachments: {
+        where: isNull(commentAttachments.deletedAt),
+      },
+    },
   })
   if (!comment || comment.source !== "logbook" || !comment.pendingOperation) {
     return { ok: false as const, error: "comment_not_syncable" }
@@ -59,9 +70,27 @@ export async function syncTicketCommentToDiscord(commentId: string) {
 
   try {
     const threadId = await getThread(comment.ticketId)
+    const mentionNames =
+      comment.pendingOperation === "delete"
+        ? new Map<string, string>()
+        : await resolveRichTextMentionNames(db, comment.bodyDocument)
+    const content =
+      comment.pendingOperation === "delete"
+        ? null
+        : richTextToDiscordMarkdown(comment.bodyDocument, {
+            baseUrl: (process.env.AUTH_URL ?? "").replace(/\/$/, ""),
+            attachments: new Map(
+              comment.richAttachments.map((attachment) => [
+                attachment.id,
+                { fileName: attachment.fileName },
+              ]),
+            ),
+            attachmentBasePath: "/api/comment-attachments",
+            mentions: mentionNames,
+          })
 
     if (comment.pendingOperation === "create") {
-      if (!comment.author || !comment.body) {
+      if (!comment.author || !content) {
         throw new Error("Comment author or body is unavailable")
       }
       const response = await callDiscordBot(
@@ -71,7 +100,7 @@ export async function syncTicketCommentToDiscord(commentId: string) {
         {
           threadId,
           commentId: comment.id,
-          content: comment.body,
+          content,
           author: {
             helmUserId: comment.author.id,
             firstName: comment.author.firstName,
@@ -110,7 +139,7 @@ export async function syncTicketCommentToDiscord(commentId: string) {
       {
         threadId,
         ...(comment.pendingOperation === "update"
-          ? { content: comment.body ?? "" }
+          ? { content: content ?? "" }
           : {}),
       },
     )

@@ -64,10 +64,7 @@ export default async function TicketPage({ params }: TicketPageProps) {
     const legacyData = await getTicketPageDataById(key)
     if (!legacyData) notFound()
     redirect(
-      getTicketPath(
-        legacyData.ticket.project.key,
-        legacyData.ticket.number,
-      ),
+      getTicketPath(legacyData.ticket.project.key, legacyData.ticket.number),
     )
   }
 
@@ -103,7 +100,15 @@ export default async function TicketPage({ params }: TicketPageProps) {
     return {
       id: comment.id,
       body: comment.body,
+      bodyDocument: comment.bodyDocument,
       attachments: comment.attachments,
+      richAttachments: comment.richAttachments.map((attachment) => ({
+        id: attachment.id,
+        fileName: attachment.fileName,
+        contentType: attachment.contentType,
+        size: attachment.size,
+        isInline: attachment.isInline,
+      })),
       source: comment.source,
       authorUserId: comment.authorUserId,
       displayName,

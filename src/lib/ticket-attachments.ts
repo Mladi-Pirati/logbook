@@ -7,7 +7,7 @@ import {
 import { and, eq, isNotNull, isNull, lt, or } from "drizzle-orm"
 import { z } from "zod"
 import { db } from "@/db"
-import { ticketAttachments } from "@/db/schema"
+import { commentAttachments, ticketAttachments } from "@/db/schema"
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 export const DRAFT_ATTACHMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000
@@ -238,6 +238,39 @@ export async function cleanupTicketAttachmentObjects(limit = 25) {
   )
 }
 
+export async function cleanupCommentAttachmentObjects(limit = 25) {
+  const cutoff = new Date(Date.now() - DRAFT_ATTACHMENT_MAX_AGE_MS)
+  const candidates = await db
+    .select({
+      id: commentAttachments.id,
+      objectKey: commentAttachments.objectKey,
+    })
+    .from(commentAttachments)
+    .where(
+      or(
+        isNotNull(commentAttachments.deletedAt),
+        and(
+          isNull(commentAttachments.commentId),
+          lt(commentAttachments.createdAt, cutoff),
+        ),
+      ),
+    )
+    .limit(limit)
+
+  await Promise.allSettled(
+    candidates.map(async (attachment) => {
+      await deleteTicketAttachmentObject(attachment.objectKey)
+      await db
+        .delete(commentAttachments)
+        .where(eq(commentAttachments.id, attachment.id))
+    }),
+  )
+}
+
 export function attachmentDownloadUrl(id: string) {
   return `/api/ticket-attachments/${id}`
+}
+
+export function commentAttachmentDownloadUrl(id: string) {
+  return `/api/comment-attachments/${id}`
 }

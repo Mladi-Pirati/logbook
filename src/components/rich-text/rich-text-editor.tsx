@@ -257,6 +257,7 @@ export function RichTextEditor({
   attachments,
   users,
   draftId,
+  attachmentBasePath = "/api/ticket-attachments",
   disabled,
   onChange,
   onPendingChange,
@@ -266,10 +267,11 @@ export function RichTextEditor({
   attachments: RichTextAttachment[]
   users: MentionableUser[]
   draftId: string
+  attachmentBasePath?: string
   disabled?: boolean
   onChange: (value: RichTextDocument) => void
   onPendingChange: (pending: boolean) => void
-  onDraftAttachmentsChange: (ids: string[]) => void
+  onDraftAttachmentsChange?: (ids: string[]) => void
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const usersRef = useRef(users)
@@ -280,7 +282,7 @@ export function RichTextEditor({
         attachment.id,
         {
           ...attachment,
-          url: `/api/ticket-attachments/${attachment.id}`,
+          url: `${attachmentBasePath}/${attachment.id}`,
           isDraft: false,
         },
       ]),
@@ -303,7 +305,7 @@ export function RichTextEditor({
             attachment.id,
             {
               ...attachment,
-              url: `/api/ticket-attachments/${attachment.id}`,
+              url: `${attachmentBasePath}/${attachment.id}`,
               isDraft: false,
             },
           ] as const,
@@ -311,14 +313,14 @@ export function RichTextEditor({
       ...currentDrafts,
     ])
     setAttachmentVersion((version) => version + 1)
-  }, [attachments])
+  }, [attachmentBasePath, attachments])
 
   useEffect(() => {
     onPendingChange(uploads.some((upload) => upload.status === "uploading"))
   }, [onPendingChange, uploads])
 
   useEffect(() => {
-    onDraftAttachmentsChange(draftAttachmentIds)
+    onDraftAttachmentsChange?.(draftAttachmentIds)
   }, [draftAttachmentIds, onDraftAttachmentsChange])
 
   const extension = useMemo(
@@ -332,13 +334,13 @@ export function RichTextEditor({
             setDraftAttachmentIds((ids) =>
               ids.filter((id) => id !== attachment.id),
             )
-            void fetch(`/api/ticket-attachments/${attachment.id}`, {
+            void fetch(`${attachmentBasePath}/${attachment.id}`, {
               method: "DELETE",
             })
           }
         },
       }),
-    [],
+    [attachmentBasePath],
   )
 
   const mentionExtension = useMemo(
@@ -488,7 +490,7 @@ export function RichTextEditor({
         formData.set("file", upload.file)
 
         try {
-          const response = await fetch("/api/ticket-attachments", {
+          const response = await fetch(attachmentBasePath, {
             method: "POST",
             body: formData,
           })

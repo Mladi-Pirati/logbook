@@ -3,6 +3,7 @@ import { and, asc, eq, isNull } from "drizzle-orm"
 import { db } from "@/db"
 import {
   columns,
+  commentAttachments,
   projects,
   ticketComments,
   ticketAttachments,
@@ -38,7 +39,12 @@ export const getTicketPageDataById = cache(async (ticketId: string) => {
         },
         comments: {
           orderBy: [asc(ticketComments.createdAt)],
-          with: { author: true },
+          with: {
+            author: true,
+            richAttachments: {
+              where: isNull(commentAttachments.deletedAt),
+            },
+          },
         },
       },
     }),

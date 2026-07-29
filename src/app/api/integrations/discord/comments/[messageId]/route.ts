@@ -5,6 +5,7 @@ import { z } from "zod"
 import { db } from "@/db"
 import { ticketComments } from "@/db/schema"
 import { verifyIntegrationAuth } from "@/lib/discord/api"
+import { EMPTY_RICH_TEXT_DOCUMENT, plainTextToRichText } from "@/lib/rich-text"
 
 const attachmentSchema = z.object({
   id: z.string().min(1),
@@ -32,7 +33,9 @@ async function findComment(messageId: string) {
   })
 }
 
-function revalidateComment(comment: NonNullable<Awaited<ReturnType<typeof findComment>>>) {
+function revalidateComment(
+  comment: NonNullable<Awaited<ReturnType<typeof findComment>>>,
+) {
   revalidatePath("/(app)/tickets/[key]", "page")
   revalidatePath(`/projects/${comment.ticket.project.key}/board`)
 }
@@ -73,6 +76,7 @@ export async function PATCH(
     .update(ticketComments)
     .set({
       body: parsed.data.content.trim() || null,
+      bodyDocument: plainTextToRichText(parsed.data.content.trim() || null),
       attachments: parsed.data.attachments,
       editedAt: new Date(parsed.data.editedAt),
       deletedAt: null,
@@ -105,6 +109,7 @@ export async function DELETE(
     .update(ticketComments)
     .set({
       body: null,
+      bodyDocument: EMPTY_RICH_TEXT_DOCUMENT,
       attachments: [],
       deletedAt: comment.deletedAt ?? new Date(),
     })

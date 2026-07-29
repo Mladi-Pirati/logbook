@@ -6,14 +6,13 @@ import {
   ticketAssignees,
   ticketAttachments,
   ticketLabels,
-  users,
 } from "@/db/schema"
 import {
   getRichTextAttachmentIds,
-  getRichTextMentionIds,
   type RichTextDocument,
   richTextToPlainText,
 } from "@/lib/rich-text"
+import { resolveRichTextMentionNames } from "@/lib/rich-text-server"
 
 type Db = typeof db
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
@@ -57,31 +56,6 @@ async function nextColumnPosition(executor: Db | Tx, columnId: string) {
   return (maxPositionResult[0]?.pos ?? 0) + 1024
 }
 
-async function getMentionNames(executor: Db | Tx, document: RichTextDocument) {
-  const mentionIds = getRichTextMentionIds(document)
-  if (mentionIds.length === 0) return new Map<string, string>()
-
-  const mentionedUsers = await executor
-    .select({
-      id: users.id,
-      firstName: users.firstName,
-      lastName: users.lastName,
-    })
-    .from(users)
-    .where(inArray(users.id, mentionIds))
-
-  if (mentionedUsers.length !== mentionIds.length) {
-    throw new Error("Invalid user mention")
-  }
-
-  return new Map(
-    mentionedUsers.map((user) => [
-      user.id,
-      `${user.firstName} ${user.lastName}`,
-    ]),
-  )
-}
-
 export async function createTicketCore(input: CreateTicketCoreInput) {
   const {
     projectId,
@@ -100,7 +74,10 @@ export async function createTicketCore(input: CreateTicketCoreInput) {
   const attachmentIds = getRichTextAttachmentIds(descriptionDocument)
 
   return db.transaction(async (tx) => {
-    const mentionNames = await getMentionNames(tx, descriptionDocument)
+    const mentionNames = await resolveRichTextMentionNames(
+      tx,
+      descriptionDocument,
+    )
 
     if (attachmentIds.length > 0) {
       if (!draftId) throw new Error("Attachment draft is required")
@@ -198,7 +175,7 @@ export async function updateTicketCore(input: UpdateTicketCoreInput) {
 
   return db.transaction(async (tx) => {
     const mentionNames = descriptionDocument
-      ? await getMentionNames(tx, descriptionDocument)
+      ? await resolveRichTextMentionNames(tx, descriptionDocument)
       : undefined
 
     if (attachmentIds) {

@@ -3,12 +3,9 @@ import { NextResponse } from "next/server"
 import { eq } from "drizzle-orm"
 import { z } from "zod"
 import { db } from "@/db"
-import {
-  ticketComments,
-  ticketDiscordMessages,
-  users,
-} from "@/db/schema"
+import { ticketComments, ticketDiscordMessages, users } from "@/db/schema"
 import { verifyIntegrationAuth } from "@/lib/discord/api"
+import { plainTextToRichText } from "@/lib/rich-text"
 
 const attachmentSchema = z.object({
   id: z.string().min(1),
@@ -73,6 +70,7 @@ export async function POST(request: Request) {
     .values({
       ticketId: mapping.ticketId,
       body,
+      bodyDocument: plainTextToRichText(body),
       attachments: parsed.data.attachments,
       source: "discord",
       authorUserId: linkedUser?.id ?? null,

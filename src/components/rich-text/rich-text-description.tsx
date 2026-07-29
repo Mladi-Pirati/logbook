@@ -21,13 +21,19 @@ export function RichTextDescription({
   document,
   attachments,
   users,
+  attachmentBasePath = "/api/ticket-attachments",
+  emptyLabel = "No description.",
 }: {
   document: RichTextDocument
   attachments: RichTextAttachment[]
   users: MentionableUser[]
+  attachmentBasePath?: string
+  emptyLabel?: string | null
 }) {
   if (isEmptyRichTextDocument(document)) {
-    return <p className="text-sm text-muted-foreground">No description.</p>
+    return emptyLabel ? (
+      <p className="text-sm text-muted-foreground">{emptyLabel}</p>
+    ) : null
   }
 
   const attachmentMap = new Map(
@@ -70,7 +76,7 @@ export function RichTextDescription({
       attachment: ({ node }) => {
         const attachment = attachmentMap.get(String(node.attrs?.id ?? ""))
         if (!attachment) return null
-        const url = `/api/ticket-attachments/${attachment.id}`
+        const url = `${attachmentBasePath}/${attachment.id}`
         if (attachment.isInline) {
           return (
             <a href={url} target="_blank" rel="noopener noreferrer">

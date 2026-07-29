@@ -1,4 +1,7 @@
 import {
+  boolean,
+  check,
+  integer,
   index,
   jsonb,
   pgTable,
@@ -7,6 +10,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core"
+import { sql } from "drizzle-orm"
 import {
   ticketCommentSource,
   ticketCommentSyncOperation,
@@ -14,6 +18,7 @@ import {
 } from "./enums"
 import { tickets } from "./tickets"
 import { users } from "./users"
+import type { RichTextDocument } from "@/lib/rich-text"
 
 export type TicketCommentAttachment = {
   id: string
@@ -31,6 +36,13 @@ export const ticketComments = pgTable(
       .notNull()
       .references(() => tickets.id, { onDelete: "cascade" }),
     body: text("body"),
+    bodyDocument: jsonb("body_document")
+      .$type<RichTextDocument>()
+      .notNull()
+      .default({
+        type: "doc",
+        content: [{ type: "paragraph" }],
+      }),
     attachments: jsonb("attachments")
       .$type<TicketCommentAttachment[]>()
       .notNull()
@@ -71,5 +83,43 @@ export const ticketComments = pgTable(
     uniqueIndex("ticket_comments_discord_message_id_uq").on(
       table.discordMessageId,
     ),
+  ],
+)
+
+export const commentAttachments = pgTable(
+  "comment_attachments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    commentId: uuid("comment_id").references(() => ticketComments.id, {
+      onDelete: "restrict",
+    }),
+    draftId: uuid("draft_id"),
+    uploadedById: text("uploaded_by_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    objectKey: text("object_key").notNull(),
+    fileName: text("file_name").notNull(),
+    contentType: text("content_type").notNull(),
+    size: integer("size").notNull(),
+    isInline: boolean("is_inline").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("comment_attachments_object_key_uq").on(table.objectKey),
+    index("comment_attachments_comment_idx").on(table.commentId),
+    index("comment_attachments_draft_idx").on(table.draftId),
+    index("comment_attachments_cleanup_idx").on(
+      table.deletedAt,
+      table.createdAt,
+    ),
+    check(
+      "comment_attachments_owner_ck",
+      sql`((${table.commentId} is not null)::int + (${table.draftId} is not null)::int) = 1`,
+    ),
+    check("comment_attachments_size_ck", sql`${table.size} >= 0`),
   ],
 )

@@ -166,10 +166,16 @@ function validateNode(
     return (
       inlineNodeTypes.has(type) &&
       isPlainObject(value.attrs) &&
-      hasOnlyKeys(value.attrs, ["id"]) &&
+      hasOnlyKeys(value.attrs, ["id", "label", "mentionSuggestionChar"]) &&
       typeof value.attrs.id === "string" &&
       value.attrs.id.length > 0 &&
       value.attrs.id.length <= 255 &&
+      (value.attrs.label === undefined ||
+        value.attrs.label === null ||
+        (typeof value.attrs.label === "string" &&
+          value.attrs.label.length <= 255)) &&
+      (value.attrs.mentionSuggestionChar === undefined ||
+        value.attrs.mentionSuggestionChar === "@") &&
       value.content === undefined &&
       ["paragraph", "heading"].includes(parentType ?? "")
     )
@@ -307,10 +313,24 @@ function validateNode(
   return false
 }
 
+function canonicalizeRichTextNode(node: RichTextNode): RichTextNode {
+  return {
+    ...node,
+    ...(node.type === "mention"
+      ? { attrs: { id: String(node.attrs?.id ?? "") } }
+      : {}),
+    ...(node.content
+      ? { content: node.content.map(canonicalizeRichTextNode) }
+      : {}),
+  }
+}
+
 export function parseRichTextDocument(value: unknown) {
   let serialized: string
+  let documentValue: unknown
   try {
     serialized = JSON.stringify(value)
+    documentValue = JSON.parse(serialized) as unknown
   } catch {
     return null
   }
@@ -320,11 +340,12 @@ export function parseRichTextDocument(value: unknown) {
   ) {
     return null
   }
-  if (!validateNode(value) || value.type !== "doc") return null
+  if (!validateNode(documentValue) || documentValue.type !== "doc") return null
 
-  const attachmentIds = getRichTextAttachmentIds(value as RichTextDocument)
+  const document = canonicalizeRichTextNode(documentValue) as RichTextDocument
+  const attachmentIds = getRichTextAttachmentIds(document)
   if (attachmentIds.length > MAX_TICKET_ATTACHMENTS) return null
-  return value as RichTextDocument
+  return document
 }
 
 export const richTextDocumentSchema = z
@@ -445,6 +466,7 @@ export function richTextToDiscordMarkdown(
   options?: {
     baseUrl?: string
     attachments?: Map<string, Pick<RichTextAttachment, "fileName">>
+    attachmentBasePath?: string
     mentions?: Map<string, string>
   },
 ) {
@@ -479,7 +501,7 @@ export function richTextToDiscordMarkdown(
     if (node.type === "attachment") {
       const id = String(node.attrs?.id ?? "")
       const name = options?.attachments?.get(id)?.fileName ?? "Attachment"
-      const path = `/api/ticket-attachments/${id}`
+      const path = `${options?.attachmentBasePath ?? "/api/ticket-attachments"}/${id}`
       return options?.baseUrl
         ? `[📎 ${escapeMarkdown(name)}](${options.baseUrl}${path})`
         : `📎 ${escapeMarkdown(name)}`

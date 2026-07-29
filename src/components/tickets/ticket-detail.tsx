@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { format, formatDistanceToNow } from "date-fns"
@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner"
 import { TicketDialog } from "@/components/board/ticket-dialog"
 import { RichTextDescription } from "@/components/rich-text/rich-text-description"
+import { RichTextEditor } from "@/components/rich-text/rich-text-editor-dynamic"
 import type {
   Column,
   Label,
@@ -36,17 +37,25 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Textarea } from "@/components/ui/textarea"
 import {
   createTicketComment,
   deleteTicketComment,
   retryTicketCommentSync,
   updateTicketComment,
 } from "@/actions/comments"
+import {
+  EMPTY_RICH_TEXT_DOCUMENT,
+  isEmptyRichTextDocument,
+  parseRichTextDocument,
+  richTextToPlainText,
+  type RichTextAttachment,
+  type RichTextDocument,
+} from "@/lib/rich-text"
 
 export type TicketCommentView = {
   id: string
   body: string | null
+  bodyDocument: RichTextDocument
   attachments: Array<{
     id: string
     fileName: string
@@ -54,6 +63,7 @@ export type TicketCommentView = {
     contentType: string | null
     size: number
   }>
+  richAttachments: RichTextAttachment[]
   source: "logbook" | "discord"
   authorUserId: string | null
   displayName: string
@@ -183,6 +193,7 @@ export function TicketDetail({
               ticketId={ticket.id}
               comments={comments}
               currentUserId={currentUserId}
+              users={users}
             />
           </div>
 
@@ -251,40 +262,108 @@ function TicketComments({
   ticketId,
   comments,
   currentUserId,
+  users,
 }: {
   ticketId: string
   comments: TicketCommentView[]
   currentUserId: string
+  users: User[]
 }) {
-  const [body, setBody] = useState("")
+  const [bodyDocument, setBodyDocument] = useState<RichTextDocument>(() =>
+    structuredClone(EMPTY_RICH_TEXT_DOCUMENT),
+  )
+  const [draftId, setDraftId] = useState(() => crypto.randomUUID())
+  const [uploadsPending, setUploadsPending] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editingBody, setEditingBody] = useState("")
+  const [editingDocument, setEditingDocument] = useState<RichTextDocument>(() =>
+    structuredClone(EMPTY_RICH_TEXT_DOCUMENT),
+  )
+  const [editingDraftId, setEditingDraftId] = useState(() =>
+    crypto.randomUUID(),
+  )
+  const [editingUploadsPending, setEditingUploadsPending] = useState(false)
+  const [editingDraftAttachmentIds, setEditingDraftAttachmentIds] = useState<
+    string[]
+  >([])
   const [pending, startTransition] = useTransition()
+  const mentionNames = useMemo(
+    () =>
+      new Map(
+        users.map((user) => [user.id, `${user.firstName} ${user.lastName}`]),
+      ),
+    [users],
+  )
+  const bodyLength =
+    richTextToPlainText(bodyDocument, { mentions: mentionNames })?.length ?? 0
+  const editingBodyLength =
+    richTextToPlainText(editingDocument, { mentions: mentionNames })?.length ??
+    0
+
+  function resetNewComment() {
+    setBodyDocument(structuredClone(EMPTY_RICH_TEXT_DOCUMENT))
+    setDraftId(crypto.randomUUID())
+    setUploadsPending(false)
+  }
+
+  function deleteDraftAttachments(ids: string[]) {
+    void Promise.allSettled(
+      ids.map((id) =>
+        fetch(`/api/comment-attachments/${id}`, { method: "DELETE" }),
+      ),
+    )
+  }
+
+  function cancelEditing() {
+    deleteDraftAttachments(editingDraftAttachmentIds)
+    setEditingId(null)
+    setEditingDocument(structuredClone(EMPTY_RICH_TEXT_DOCUMENT))
+    setEditingDraftId(crypto.randomUUID())
+    setEditingUploadsPending(false)
+    setEditingDraftAttachmentIds([])
+  }
 
   function submitComment() {
+    const document = parseRichTextDocument(bodyDocument)
+    if (!document) {
+      toast.error("Comment contains unsupported formatting")
+      return
+    }
+
     startTransition(async () => {
-      const result = await createTicketComment({ ticketId, body })
+      const result = await createTicketComment({
+        ticketId,
+        bodyDocument: document,
+        draftId,
+      })
       if (!result.ok) {
         toast.error("Could not add comment")
         return
       }
-      setBody("")
+      resetNewComment()
       if (result.synced) toast.success("Comment added")
       else toast.warning("Comment saved, but Discord sync failed")
     })
   }
 
   function saveEdit(commentId: string) {
+    const document = parseRichTextDocument(editingDocument)
+    if (!document) {
+      toast.error("Comment contains unsupported formatting")
+      return
+    }
+
     startTransition(async () => {
       const result = await updateTicketComment({
         commentId,
-        body: editingBody,
+        bodyDocument: document,
+        draftId: editingDraftId,
       })
       if (!result.ok) {
         toast.error("Could not update comment")
         return
       }
       setEditingId(null)
+      setEditingDraftAttachmentIds([])
       if (!result.synced) {
         toast.warning("Comment updated, but Discord sync failed")
       }
@@ -395,33 +474,56 @@ function TicketComments({
 
                 {editingId === comment.id ? (
                   <div className="mt-2 grid gap-2">
-                    <Textarea
-                      maxLength={2000}
-                      value={editingBody}
-                      onChange={(event) => setEditingBody(event.target.value)}
+                    <RichTextEditor
+                      key={editingDraftId}
+                      value={editingDocument}
+                      attachments={comment.richAttachments}
+                      users={users}
+                      draftId={editingDraftId}
+                      attachmentBasePath="/api/comment-attachments"
+                      disabled={pending}
+                      onChange={setEditingDocument}
+                      onPendingChange={setEditingUploadsPending}
+                      onDraftAttachmentsChange={setEditingDraftAttachmentIds}
                     />
-                    <div className="flex gap-2">
-                      <Button
-                        size="xs"
-                        disabled={pending || !editingBody.trim()}
-                        onClick={() => saveEdit(comment.id)}
-                      >
-                        <CheckIcon />
-                        Save
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => setEditingId(null)}
-                      >
-                        Cancel
-                      </Button>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {editingBodyLength}/2000
+                      </span>
+                      <div className="flex gap-2">
+                        <Button
+                          size="xs"
+                          disabled={
+                            pending ||
+                            editingUploadsPending ||
+                            editingBodyLength > 2000 ||
+                            isEmptyRichTextDocument(editingDocument)
+                          }
+                          onClick={() => saveEdit(comment.id)}
+                        >
+                          <CheckIcon />
+                          Save
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={cancelEditing}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ) : (
-                  <p className="mt-2 whitespace-pre-wrap text-sm">
-                    {comment.body}
-                  </p>
+                  <div className="mt-2">
+                    <RichTextDescription
+                      document={comment.bodyDocument}
+                      attachments={comment.richAttachments}
+                      users={users}
+                      attachmentBasePath="/api/comment-attachments"
+                      emptyLabel={null}
+                    />
+                  </div>
                 )}
 
                 {comment.attachments.length > 0 && (
@@ -465,8 +567,13 @@ function TicketComments({
                         variant="ghost"
                         title="Edit comment"
                         onClick={() => {
+                          if (editingId) cancelEditing()
                           setEditingId(comment.id)
-                          setEditingBody(comment.body ?? "")
+                          setEditingDocument(
+                            structuredClone(comment.bodyDocument),
+                          )
+                          setEditingDraftId(crypto.randomUUID())
+                          setEditingDraftAttachmentIds([])
                         }}
                       >
                         <PencilSimpleIcon />
@@ -499,18 +606,30 @@ function TicketComments({
         })}
 
         <div className="grid gap-2 border-t pt-4">
-          <Textarea
-            value={body}
-            maxLength={2000}
-            rows={4}
-            placeholder="Add a comment…"
-            onChange={(event) => setBody(event.target.value)}
+          <RichTextEditor
+            key={draftId}
+            value={bodyDocument}
+            attachments={[]}
+            users={users}
+            draftId={draftId}
+            attachmentBasePath="/api/comment-attachments"
+            disabled={pending}
+            onChange={setBodyDocument}
+            onPendingChange={setUploadsPending}
           />
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">
-              {body.length}/2000
+              {bodyLength}/2000
             </span>
-            <Button disabled={pending || !body.trim()} onClick={submitComment}>
+            <Button
+              disabled={
+                pending ||
+                uploadsPending ||
+                bodyLength > 2000 ||
+                isEmptyRichTextDocument(bodyDocument)
+              }
+              onClick={submitComment}
+            >
               Add comment
             </Button>
           </div>

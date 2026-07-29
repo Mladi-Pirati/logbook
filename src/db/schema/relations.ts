@@ -9,7 +9,7 @@ import {
   ticketLabels,
 } from "./tickets"
 import { ticketDiscordMessages } from "./discord"
-import { ticketComments } from "./comments"
+import { commentAttachments, ticketComments } from "./comments"
 
 export const usersRelations = relations(users, ({ many }) => ({
   ledProjects: many(projects),
@@ -17,6 +17,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   reportedTickets: many(tickets),
   ticketComments: many(ticketComments),
   uploadedTicketAttachments: many(ticketAttachments),
+  uploadedCommentAttachments: many(commentAttachments),
 }))
 
 export const projectsRelations = relations(projects, ({ one, many }) => ({
@@ -97,16 +98,34 @@ export const ticketDiscordMessagesRelations = relations(
   }),
 )
 
-export const ticketCommentsRelations = relations(ticketComments, ({ one }) => ({
-  ticket: one(tickets, {
-    fields: [ticketComments.ticketId],
-    references: [tickets.id],
+export const ticketCommentsRelations = relations(
+  ticketComments,
+  ({ one, many }) => ({
+    ticket: one(tickets, {
+      fields: [ticketComments.ticketId],
+      references: [tickets.id],
+    }),
+    author: one(users, {
+      fields: [ticketComments.authorUserId],
+      references: [users.id],
+    }),
+    richAttachments: many(commentAttachments),
   }),
-  author: one(users, {
-    fields: [ticketComments.authorUserId],
-    references: [users.id],
+)
+
+export const commentAttachmentsRelations = relations(
+  commentAttachments,
+  ({ one }) => ({
+    comment: one(ticketComments, {
+      fields: [commentAttachments.commentId],
+      references: [ticketComments.id],
+    }),
+    uploadedBy: one(users, {
+      fields: [commentAttachments.uploadedById],
+      references: [users.id],
+    }),
   }),
-}))
+)
 
 export const ticketAssigneesRelations = relations(
   ticketAssignees,
